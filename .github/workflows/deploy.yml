@@ -1,15 +1,16 @@
 # Builds the site with Eleventy and deploys _site/ to the Cloudflare Pages project "zuhayrium".
-# A push to main updates production (zuhayrium.com); a push to any other branch gets its own
-# preview URL. Needs the repository secrets CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.
+# Only pushes to main deploy, and they update production (zuhayrium.com). Other branches are
+# never deployed, because Pages preview sites are public. Needs the repository secrets
+# CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.
 name: Deploy
 
 on:
   push:
-  workflow_dispatch:
+    branches: [main]
 
-# A newer push to the same branch replaces a deployment that is still running.
+# A newer push replaces a deployment that is still running.
 concurrency:
-  group: deploy-${{ github.ref }}
+  group: deploy-production
   cancel-in-progress: true
 
 permissions:
@@ -35,4 +36,4 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: "4.157.0"
-          command: pages deploy _site --project-name=zuhayrium --branch=${{ github.ref_name }}
+          command: pages deploy _site --project-name=zuhayrium --branch=main

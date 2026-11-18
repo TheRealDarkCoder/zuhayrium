@@ -21,12 +21,12 @@ The site is built with [Eleventy](https://www.11ty.dev/), pinned to an exact ver
 
 `npm run build` builds the site, and `npm start` serves it with live reload at <http://localhost:8080>. There is no test runner. The starter files in `templates/` explain how to add essays and activities. The README belongs to the owner and stays brief, so keep workflow notes here, and keep them accurate as tooling changes.
 
-Deployment is `.github/workflows/deploy.yml`, which runs on every push:
+Deployment is `.github/workflows/deploy.yml`, which runs only on pushes to `main`:
 
 1. It builds with Eleventy.
-2. It deploys `_site/` to the Cloudflare Pages project `zuhayrium` with Wrangler.
+2. It deploys `_site/` to the Cloudflare Pages project `zuhayrium` with Wrangler, which updates production at zuhayrium.com.
 
-Pushes to `main` update production, zuhayrium.com. Pushes to other branches get a preview URL. The workflow needs the repository secrets `CLOUDFLARE_API_TOKEN` (an API token with the account permission Cloudflare Pages: Edit) and `CLOUDFLARE_ACCOUNT_ID`. Actions are pinned to commit SHAs. Update the SHA and its version comment together.
+Other branches are never deployed, because Pages preview sites are public. Preview locally with `npm start`. The workflow needs the repository secrets `CLOUDFLARE_API_TOKEN` (an API token with the account permission Cloudflare Pages: Edit) and `CLOUDFLARE_ACCOUNT_ID`. Actions are pinned to commit SHAs. Update the SHA and its version comment together.
 
 Treat the essays as dated sources of public content and writing style. So is the former About page, which is in git history. Confirm time-sensitive claims before presenting them as current. Do not infer new portfolio facts from private writing samples or fabricate missing content.
 
