@@ -114,8 +114,8 @@ This system was selected on 14 November 2026. It is implemented in `src/css/main
 
 | Page | Body class | Structure |
 | --- | --- | --- |
-| Record (`src/index.njk`) | `record` | Introduction and routes; contents with one row per period; periods oldest first, entries in date order. Generated from essays (`src/blogs/`) and page-less activities (`src/activities/`). |
-| Writing list (`src/writing.njk`, served at `/blogs/`) | `record` | Essays oldest first, using the same entry component. Generated. |
+| Record (`src/index.njk`) | `record` | Introduction and routes; contents with one row per period; periods and entries newest first. Generated from essays (`src/blogs/`) and page-less activities (`src/activities/`). |
+| Writing list (`src/writing.njk`, served at `/blogs/`) | `record` | Essays newest first, using the same entry component. Generated. |
 | Article (essays, project pages) | `article` | Trail; title; standfirst; dates list; "On this page"; optional latest-update box; sections; optional figures and numbered references; footer link back to the record. |
 | Not found (`404.html`) | `record` | A short message and routes onward. |
 

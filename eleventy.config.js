@@ -62,7 +62,7 @@ export default function (eleventyConfig) {
   eleventyConfig.addFilter("shortDate", (date) => dateParts(date).text);
   eleventyConfig.addFilter("outline", outline);
 
-  // Groups a date-sorted collection into periods, keeping its order (oldest first). The period
+  // Groups a date-sorted collection into periods, keeping its order. The period
   // is the year unless an entry names one in front matter, such as `period: Before 2015`.
   eleventyConfig.addFilter("byPeriod", (items) => {
     const periods = [];

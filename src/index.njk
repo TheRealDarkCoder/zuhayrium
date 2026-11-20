@@ -3,7 +3,7 @@ layout: base.njk
 bodyClass: record
 description: Hi you found me! This is my personal journal
 ---
-{%- set periods = collections.record | byPeriod %}
+{%- set periods = collections.record | reverse | byPeriod %}
 <header class="column">
   <h1>Zuhayrium</h1>
   <p>I’m Zuhayr. I do science stuff: electronics, AI, and whatever I can learn by building it before I feel ready. I also solder things, fly planes in simulators, and get a big smile when I see someone running their first line of code. This is where I keep a record of what I’ve made, tried, and written. Opinions are my own; feel free to disagree.</p>
