@@ -1,0 +1,417 @@
+---
+title: "Chasing Invisible Targets in London: Correcting GaN Amplifier Distortion in OFDM Radar"
+standfirst: "How a team from Oulu reached the EuMW 2026 Student Design Competition final, discovered the measured amplifier wasn't the nonlinear monster we expected, lost gracefully in London, and still walked away better radio engineers."
+date: 2026-10-09
+---
+<p>If you travel roughly 200 kilometres south of the Arctic Circle, you hit Oulu, Finland—a city famous for two things: the Air Guitar World Championships (held every summer since 1996, with straight-faced international judges scoring people playing guitars that do not exist) and the 6G Flagship at the University of Oulu's Centre for Wireless Communications. Between air guitars and sub-terahertz radio waves, Oulu is a town unusually comfortable taking invisible things very seriously.</p>
+
+<p>In October 2026, that habit put me on a plane to London alongside my colleague <strong>Aprotim Paul</strong> for <a href="https://www.6gflagship.com/news/oulu-eumw-student-design-competition-final/">the final of the EuRAD Student Design Competition</a> at European Microwave Week (EuMW 2026). Together with our teammate <strong>Dimuthu Lesthuruge</strong>—a final-year doctoral candidate at CWC, we flew out to present—we had spent weeks wrestling with real measured data from a gallium nitride (GaN) power amplifier.</p>
+
+<p>Spoiler up front: we were finalists, and we did not take home the trophy. A sharp team from Brandenburgische Technische Universität (BTU) Cottbus-Senftenberg won with their receiver architecture, <em>RAGE-AF</em>. Even so, between surviving the chaotic-until-it-was-normal commute into ExCeL London, getting humbled by real RF measurement data, and decompressing afterwards at Bletchley Park, it was the week radio engineering stopped feeling like a set of university problem sheets and started feeling real.</p>
+
+<figure>
+  <img src="eumw-gan-radar/team-anechoic.jpg" alt="Dimuthu Lesthuruge, Ahmed Jabir Zuhayr, and Aprotim Paul standing inside a blue pyramidal-absorber anechoic chamber at the University of Oulu" loading="lazy">
+  <figcaption>From left to right: Dimuthu Lesthuruge, me, and Aprotim Paul inside one of the Centre for Wireless Communications' anechoic chambers in Oulu before the trip to London.</figcaption>
+</figure>
+
+<h2 id="the-problem">The loud neighbour problem (and an amplifier that edits your signal)</h2>
+
+<p>The competition—officially <em>"The GaN Challenge: mastering OFDM radar under real PA nonlinearities"</em>, sponsored by NI and Emerson and backed by researchers from Vrije Universiteit Brussel, Cranfield University, the University of Strathclyde, and Emerson—handed us a very modern headache. Future wireless systems increasingly want one wideband OFDM waveform to pull double duty: carry data to a phone while simultaneously acting as a radar pulse bouncing off objects in the environment (Integrated Sensing and Communication, or ISAC).</p>
+
+<p>In textbook radar, finding targets is straightforward. You transmit a known signal <code>x(t)</code>, wait for echoes to return after round-trip delays <code>τ<sub>k</sub></code>, and slide a copy of your transmitted waveform across the recording. That sliding correlation is the <strong>matched filter</strong>. Wherever your template lines up with an echo, the correlation spikes. The spike's delay gives you distance, and mathematically, matched filtering maximizes signal-to-noise ratio (SNR).</p>
+
+<p>There are two catches—one from the math, and one from the hardware.</p>
+
+<p><strong>Catch 1: Every peak has a skirt.</strong> Correlate a finite OFDM symbol with itself and you never get a razor-thin impulse. You get one tall central peak (the <em>mainlobe</em>) surrounded by ripples called <em>range sidelobes</em>. With one target, nobody cares. Put a strong reflector next to a weak one, though, and the strong target's sidelobes swallow the weak target whole. As we put it on stage in London, it is like trying to hear the person standing in front of you at the EuMW reception while someone two metres away explains GaN thermal management at full volume. Nothing in the hardware even has to be broken for target four to vanish.</p>
+
+<p><strong>Catch 2: The GaN amplifier edits your message.</strong> OFDM waveforms are built by summing hundreds or thousands of subcarriers, which gives them spiky amplitudes—high peak-to-average power ratio (PAPR). Push those spikes through a real gallium nitride power amplifier and the hardware fights back: it compresses the peaks (AM/AM distortion), twists the phase as amplitude changes (AM/PM distortion), and remembers what happened nanoseconds earlier through its bias networks and matching circuits (memory effects). The antenna does not radiate your clean digital <code>x(t)</code>; it radiates a bent <code>x'(t)</code>. Every echo coming back from the channel is an echo of <code>x'</code>, while a naive receiver keeps searching for <code>x</code>.</p>
+
+<h2 id="the-fix">Pin the peak, learn the amplifier</h2>
+
+<p>Our receiver pipeline tackled those two problems in order—entirely in receive-side DSP, without touching the transmitter.</p>
+
+<h3>Step 1: Stop matching</h3>
+
+<p>A matched filter uses an exact copy of the transmit waveform, maximizing peak SNR at the expense of loud sidelobes. A <strong>constrained mismatched filter (MMF)</strong> deliberately trades away a fraction of peak gain to crush the sidelobes around it. Think of it as <em>pinning the peak and squashing the rest</em>: we design a receive filter <code>h</code> of length <code>L</code> that forces unit gain at zero lag while minimizing total energy across the sidelobe lag set <code>S</code> (outside a small mainlobe guard region):</p>
+
+<pre><code>minimize   ∑_{k ∈ S} |(x * h)[k]|² + λ‖h‖₂²
+subject to (x * h)[0] = 1</code></pre>
+
+<p>Forming the shifted sidelobe matrix <code>Q</code> and the regularized Gram matrix <code>R = QᴴQ + λI</code> (with ridge parameter <code>λ &gt; 0</code> keeping the inversion well-conditioned when rows are correlated) yields a clean closed-form solution for <code>w = conj(h)</code>:</p>
+
+<pre><code>w = (R⁻¹ a₀*) / (a₀ᴴ R⁻¹ a₀*),   h = w*</code></pre>
+
+<p>If that algebraic shape looks familiar, it should: Jack Capon published essentially the same minimum-variance distortionless response structure in 1969 for a seismic array in Montana. Seismologists got there half a century before 6G radar engineers.</p>
+
+<h3>Step 2: Model what the PA actually radiated</h3>
+
+<p>Once the MMF cleared out the processing sidelobes, we still had template mismatch: our filter was designed around <code>x</code> instead of the amplifier's actual output <code>x'</code>. Normally, RF engineers fix a nonlinear PA at the transmitter using <strong>Digital Predistortion (DPD)</strong>—pre-bending the signal in the opposite direction inside a closed hardware feedback loop. We would have loved to run DPD. Unfortunately, you need an amplifier on a bench to close a DPD loop, and the competition handed us seven HDF5 files. It is very hard to predistort an HDF5 file.</p>
+
+<p>Instead, we leaned on a 1952 result from Julian Bussgang at MIT. Bussgang showed that when you push a Gaussian-looking signal through a static nonlinearity, the output splits cleanly into a scaled, phase-rotated copy of the input plus a distortion residual uncorrelated with the input: <code>x'[n] = G·x[n] + d[n]</code>, where <code>E{d·x*} = 0</code>. Because a wideband OFDM waveform is a sum of many independent subcarriers, it looks comfortably Gaussian.</p>
+
+<p>A single complex scalar <code>G</code> assumes a memoryless amplifier, which real wideband GaN hardware is not. So we extended this <strong>Best Linear Approximation (BLA)</strong> to a <strong>64-tap FIR filter</strong> conditioned on operating state—specifically bandwidth <code>B</code> and drive power <code>P</code>—capturing the amplifier's short-term memory from measured input/output frame pairs. Feed the resulting predicted transmit template <code>G<sub>B,P</sub>·x</code> into the constrained mismatched filter, and the receiver finally looks for what actually left the antenna.</p>
+
+<p>There was a neat ISAC bonus hiding inside the same model. Because the radar pulse is also carrying QAM data symbols, dividing out the learned amplifier response cleans up the communication link too: at 100 MHz and full drive on our measured data, error vector magnitude (EVM) dropped from <strong>−5 dB to −27 dB</strong>—a 22 dB cleanup from the exact same PA model.</p>
+
+<h2 id="interactive-explorer">See what bandwidth and distortion actually do</h2>
+
+<p>Static plots make radar filtering look like magic until you drag the knobs yourself. The interactive sketch below models the four-target range profile geometry from our challenge across the seven dataset bandwidths (10 MHz to 975 MHz) and varying levels of GaN PA compression. Drag <strong>Bandwidth</strong> to see range resolution tighten, then push <strong>PA Compression</strong> upward to watch what happens when an amplifier drifts away from the clean ideal template.</p>
+
+<figure class="eumw-sim" id="eumw-sim">
+  <style>
+    .eumw-sim {
+      margin: 2rem 0;
+      padding: 1.25rem;
+      border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+      border-radius: 10px;
+      background: color-mix(in srgb, currentColor 3%, transparent);
+      font-family: inherit;
+    }
+    .eumw-sim-controls {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem 1.5rem;
+      margin-bottom: 1rem;
+    }
+    .eumw-sim-control label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-bottom: 0.35rem;
+    }
+    .eumw-sim-control input[type="range"] {
+      width: 100%;
+      cursor: pointer;
+    }
+    .eumw-sim-toggles {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.9rem;
+      margin-bottom: 0.9rem;
+      font-size: 0.85rem;
+    }
+    .eumw-sim-toggles label {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      cursor: pointer;
+      user-select: none;
+    }
+    .eumw-sim-swatch {
+      width: 12px;
+      height: 3px;
+      display: inline-block;
+      border-radius: 2px;
+    }
+    .eumw-sim svg {
+      width: 100%;
+      height: auto;
+      display: block;
+      overflow: visible;
+    }
+    .eumw-sim-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 0.75rem;
+      margin-top: 0.9rem;
+      padding-top: 0.85rem;
+      border-top: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+      font-size: 0.85rem;
+    }
+    .eumw-sim-stat strong {
+      display: block;
+      font-size: 1.05rem;
+      font-variant-numeric: tabular-nums;
+    }
+    .eumw-sim-note {
+      margin-top: 0.75rem;
+      font-size: 0.85rem;
+      opacity: 0.85;
+    }
+  </style>
+
+  <div class="eumw-sim-controls">
+    <div class="eumw-sim-control">
+      <label for="eumw-bw">
+        <span>Signal bandwidth</span>
+        <span id="eumw-bw-val">100 MHz</span>
+      </label>
+      <input id="eumw-bw" type="range" min="0" max="6" step="1" value="3" aria-label="Signal bandwidth">
+    </div>
+    <div class="eumw-sim-control">
+      <label for="eumw-drive">
+        <span>PA drive / compression</span>
+        <span id="eumw-drive-val">15% (measured dataset)</span>
+      </label>
+      <input id="eumw-drive" type="range" min="0" max="100" step="1" value="15" aria-label="Power amplifier compression level">
+    </div>
+  </div>
+
+  <div class="eumw-sim-toggles">
+    <label>
+      <input type="checkbox" id="eumw-show-mf" checked>
+      <span class="eumw-sim-swatch" style="background:#7a828e;"></span>
+      Matched filter (ideal x)
+    </label>
+    <label>
+      <input type="checkbox" id="eumw-show-rec" checked>
+      <span class="eumw-sim-swatch" style="background:#d98a1c;"></span>
+      Reciprocal / MMF (ideal x)
+    </label>
+    <label>
+      <input type="checkbox" id="eumw-show-bla" checked>
+      <span class="eumw-sim-swatch" style="background:#7c3aed;"></span>
+      Conditional 64-tap BLA + MMF (ours)
+    </label>
+  </div>
+
+  <svg id="eumw-svg" viewBox="0 0 720 300" role="img" aria-label="Interactive radar range profile comparing matched filter, ideal reciprocal filter, and conditional BLA mismatched filter across four targets"></svg>
+
+  <div class="eumw-sim-stats">
+    <div class="eumw-sim-stat">
+      Matched filter PSLR
+      <strong id="eumw-stat-mf">15.8 dB</strong>
+    </div>
+    <div class="eumw-sim-stat">
+      Ideal MMF PSLR
+      <strong id="eumw-stat-rec">28.3 dB</strong>
+    </div>
+    <div class="eumw-sim-stat">
+      BLA + MMF PSLR (ours)
+      <strong id="eumw-stat-bla">30.1 dB</strong>
+    </div>
+    <div class="eumw-sim-stat">
+      Weak target (T4) margin
+      <strong id="eumw-stat-t4">+16.6 dB</strong>
+    </div>
+  </div>
+
+  <p class="eumw-sim-note" id="eumw-note"></p>
+  <figcaption>Illustrative interactive model calibrated to the behaviours observed across our seven measured bandwidths (10–975 MHz): narrowband resolution limits on the left, mild nonlinearity in the actual competition dataset, and growing template mismatch when a PA is driven hard into compression.</figcaption>
+</figure>
+
+<script>
+(() => {
+  const bws = [10, 25, 50, 100, 250, 500, 975];
+  // Four targets: range (m) and relative reflectivity (dB)
+  const targets = [
+    { name: "T1", r: 95,  db: 0.0 },
+    { name: "T2", r: 122, db: -3.5 },
+    { name: "T3", r: 215, db: -6.0 },
+    { name: "T4", r: 268, db: -13.5 }
+  ];
+
+  const bwInput = document.getElementById("eumw-bw");
+  const driveInput = document.getElementById("eumw-drive");
+  const bwVal = document.getElementById("eumw-bw-val");
+  const driveVal = document.getElementById("eumw-drive-val");
+  const showMf = document.getElementById("eumw-show-mf");
+  const showRec = document.getElementById("eumw-show-rec");
+  const showBla = document.getElementById("eumw-show-bla");
+  const svg = document.getElementById("eumw-svg");
+  const statMf = document.getElementById("eumw-stat-mf");
+  const statRec = document.getElementById("eumw-stat-rec");
+  const statBla = document.getElementById("eumw-stat-bla");
+  const statT4 = document.getElementById("eumw-stat-t4");
+  const noteEl = document.getElementById("eumw-note");
+
+  const W = 720, H = 300;
+  const pad = { l: 48, r: 16, t: 24, b: 34 };
+  const plotW = W - pad.l - pad.r;
+  const plotH = H - pad.t - pad.b;
+  const rMin = 20, rMax = 340;
+  const dbMin = -46, dbMax = 4;
+
+  const xOf = r => pad.l + ((r - rMin) / (rMax - rMin)) * plotW;
+  const yOf = db => pad.t + ((dbMax - Math.max(dbMin, Math.min(dbMax, db))) / (dbMax - dbMin)) * plotH;
+
+  function ripple(r, freq, phase) {
+    return 0.55 * Math.sin(r * freq + phase)
+         + 0.30 * Math.cos(r * freq * 1.73 - phase * 0.7)
+         + 0.15 * Math.sin(r * freq * 2.91 + phase * 1.3);
+  }
+
+  function render() {
+    const idx = parseInt(bwInput.value, 10);
+    const bw = bws[idx];
+    const drive = parseInt(driveInput.value, 10); // 0..100
+    const dNorm = drive / 100;
+
+    bwVal.textContent = `${bw} MHz`;
+    if (drive <= 22) {
+      driveVal.textContent = `${drive}% (near measured dataset)`;
+    } else if (drive <= 60) {
+      driveVal.textContent = `${drive}% (moderate compression)`;
+    } else {
+      driveVal.textContent = `${drive}% (heavy GaN saturation)`;
+    }
+
+    // Physical mainlobe scale (meters), bounded visually for crisp wide-BW rendering
+    const resM = Math.max(2.1, Math.min(18.0, 150 / bw));
+
+    // Bandwidth processing-gain offset (wider OFDM = lower noise/sidelobe floor)
+    const bwBonus = (idx - 3) * 1.45; // centered at 100 MHz
+
+    // Effective sidelobe floors (dB below T1 peak)
+    const floorMf  = Math.min(-7.5, -15.8 - bwBonus * 0.85 + dNorm * 5.8);
+    const floorRec = Math.min(-11.5, -28.6 - bwBonus * 0.95 + Math.pow(dNorm, 1.35) * 14.5);
+    // Conditional BLA removes linear/memory distortion cleanly; residual Bussgang noise d[n] grows gently at extreme drive
+    const floorBla = Math.min(-16.0, -30.5 - bwBonus * 0.95 + Math.pow(dNorm, 2.2) * 7.2);
+
+    const N = 260;
+    const ptsMf = [], ptsRec = [], ptsBla = [];
+
+    for (let i = 0; i <= N; i++) {
+      const r = rMin + (i / N) * (rMax - rMin);
+
+      // Sum target mainlobes in linear power
+      let pMain = 0;
+      for (const t of targets) {
+        const u = (r - t.r) / resM;
+        const amp = Math.pow(10, t.db / 20);
+        // Gaussian-tapered mainlobe envelope
+        const lobe = Math.exp(-0.5 * u * u * 2.2);
+        pMain += amp * amp * lobe * lobe;
+      }
+
+      // Near-target sidelobe skirt (stronger for MF)
+      let skirtMf = 0;
+      for (const t of targets) {
+        const dist = Math.abs(r - t.r);
+        const amp = Math.pow(10, t.db / 20);
+        const env = 1 / (1 + Math.pow(dist / (resM * 1.9), 1.6));
+        skirtMf += amp * amp * env * 0.045 * (1 + dNorm * 1.2);
+      }
+
+      const r1 = ripple(r, 0.38 + idx * 0.09, 0.4);
+      const r2 = ripple(r, 0.44 + idx * 0.11, 1.9);
+      const r3 = ripple(r, 0.51 + idx * 0.12, 3.1);
+
+      const pMf  = pMain + skirtMf + Math.pow(10, (floorMf  + r1 * 1.6) / 10);
+      const pRec = pMain + Math.pow(10, (floorRec + r2 * 1.1) / 10);
+      const pBla = pMain + Math.pow(10, (floorBla + r3 * 0.9) / 10);
+
+      ptsMf.push(`${xOf(r).toFixed(1)},${yOf(10 * Math.log10(pMf)).toFixed(1)}`);
+      ptsRec.push(`${xOf(r).toFixed(1)},${yOf(10 * Math.log10(pRec)).toFixed(1)}`);
+      ptsBla.push(`${xOf(r).toFixed(1)},${yOf(10 * Math.log10(pBla)).toFixed(1)}`);
+    }
+
+    // Compute headline stats (PSLR relative to 0 dB peak, T4 margin over BLA floor)
+    const pslrMf  = Math.max(5, -floorMf - 0.6);
+    const pslrRec = Math.max(6, -floorRec - 0.4);
+    const pslrBla = Math.max(8, -floorBla - 0.4);
+    const t4Margin = -13.5 - floorBla;
+
+    statMf.textContent  = `${pslrMf.toFixed(1)} dB`;
+    statRec.textContent = `${pslrRec.toFixed(1)} dB`;
+    statBla.textContent = `${pslrBla.toFixed(1)} dB`;
+    statT4.textContent  = `${t4Margin >= 0 ? "+" : ""}${t4Margin.toFixed(1)} dB`;
+
+    // Contextual observation note
+    if (bw <= 25) {
+      noteEl.textContent = `At ${bw} MHz, range resolution is ~${Math.round(150 / bw)} m. Even with sidelobes suppressed, T1 and T2 start crowding into each other—physics caps resolution before filtering can help.`;
+    } else if (drive <= 22) {
+      noteEl.textContent = `Near the actual EuMW dataset operating regime: the GaN PA is barely compressed, so the ideal reciprocal filter already sits close to our conditional BLA—while classical matched filtering leaves T4 flirting with the sidelobe floor.`;
+    } else if (drive <= 65) {
+      noteEl.textContent = `As PA compression rises, the ideal-template filter drifts and its sidelobe floor climbs. Learning the amplifier's 64-tap BLA keeps T4 cleanly separated above the floor.`;
+    } else {
+      noteEl.textContent = `Under heavy GaN saturation, the ideal template degrades sharply and matched filtering buries T4 completely. Even our linear BLA starts creeping up from uncorrelated nonlinear distortion d[n]—where a nonlinear neural PA model or closed-loop DPD would take over.`;
+    }
+
+    // Build SVG markup
+    let grid = "";
+    for (let db = 0; db >= -40; db -= 10) {
+      const y = yOf(db).toFixed(1);
+      grid += `<line x1="${pad.l}" y1="${y}" x2="${W - pad.r}" y2="${y}" stroke="currentColor" stroke-opacity="0.12" stroke-dasharray="3 3"/>`;
+      grid += `<text x="${pad.l - 8}" y="${(parseFloat(y) + 4).toFixed(1)}" text-anchor="end" font-size="11" fill="currentColor" fill-opacity="0.7">${db}</text>`;
+    }
+    for (let r = 50; r <= 300; r += 50) {
+      const x = xOf(r).toFixed(1);
+      grid += `<line x1="${x}" y1="${pad.t}" x2="${x}" y2="${H - pad.b}" stroke="currentColor" stroke-opacity="0.08"/>`;
+      grid += `<text x="${x}" y="${H - 12}" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity="0.7">${r} m</text>`;
+    }
+
+    let markers = "";
+    for (const t of targets) {
+      const x = xOf(t.r).toFixed(1);
+      const isWeak = t.name === "T4";
+      markers += `<line x1="${x}" y1="${pad.t}" x2="${x}" y2="${H - pad.b}" stroke="${isWeak ? "#7c3aed" : "currentColor"}" stroke-opacity="${isWeak ? "0.35" : "0.18"}" stroke-dasharray="2 3"/>`;
+      markers += `<text x="${x}" y="${pad.t - 7}" text-anchor="middle" font-size="11" font-weight="${isWeak ? "700" : "500"}" fill="${isWeak ? "#7c3aed" : "currentColor"}" fill-opacity="${isWeak ? "0.95" : "0.75"}">${t.name}${isWeak ? " (weak)" : ""}</text>`;
+    }
+
+    const curves = [
+      showMf.checked  ? `<polyline fill="none" stroke="#7a828e" stroke-width="1.8" stroke-opacity="0.85" points="${ptsMf.join(" ")}"/>` : "",
+      showRec.checked ? `<polyline fill="none" stroke="#d98a1c" stroke-width="1.9" stroke-opacity="0.9" points="${ptsRec.join(" ")}"/>` : "",
+      showBla.checked ? `<polyline fill="none" stroke="#7c3aed" stroke-width="2.3" points="${ptsBla.join(" ")}"/>` : ""
+    ].join("");
+
+    svg.innerHTML = `
+      ${grid}
+      ${markers}
+      <line x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${H - pad.b}" stroke="currentColor" stroke-opacity="0.35"/>
+      <line x1="${pad.l}" y1="${H - pad.b}" x2="${W - pad.r}" y2="${H - pad.b}" stroke="currentColor" stroke-opacity="0.35"/>
+      <text x="14" y="${pad.t + plotH / 2}" transform="rotate(-90 14 ${pad.t + plotH / 2})" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity="0.7">Magnitude (dB)</text>
+      ${curves}
+    `;
+  }
+
+  [bwInput, driveInput, showMf, showRec, showBla].forEach(el => el.addEventListener("input", render));
+  render();
+})();
+</script>
+
+<h2 id="plot-twist">The plot twist in the measured data (and where it struggled)</h2>
+
+<p>When we first downloaded the seven NI/Emerson measurement files (<code>10</code>, <code>25</code>, <code>50</code>, <code>100</code>, <code>250</code>, <code>500</code>, and <code>975 MHz</code>), we braced for a fire-breathing nonlinear GaN monster. We built memory polynomials, ran diagnostics, and expected AM/AM compression to wreck everything.</p>
+
+<p>Then we actually looked closely at the measured waveforms.</p>
+
+<p>Across most operating conditions in the dataset, the power amplifier was barely compressed—roughly linear frequency response and mild distortion dominated far more than hard saturation. We even put a slide in our London deck titled <em>"The dataset was mostly linear… :)"</em>. That single empirical check saved us from building an over-engineered black box tuned to an imaginary monster. It also explained why our compact 64-tap conditional BLA did so well.</p>
+
+<figure>
+  <img src="eumw-gan-radar/results-pslr.png" alt="Bar chart comparing median peak-to-sidelobe ratio across 133 held-out conditions: Matched filter 15.76 dB, Reciprocal filter 28.29 dB, Conditional BLA 30.13 dB, against the 30.40 dB measured-output oracle ceiling" loading="lazy">
+  <figcaption>Median peak-to-sidelobe ratio across all 133 held-out operating conditions: +14.4 dB over classical matched filtering and within 0.27 dB of an oracle receiver handed the true measured PA output.</figcaption>
+</figure>
+
+<p>Evaluated across all <strong>133 held-out operating conditions</strong> spanning the full 10–975 MHz sweep:</p>
+
+<ul>
+  <li><strong>Classical matched filter (ideal waveform):</strong> 15.76 dB median PSLR.</li>
+  <li><strong>Reciprocal filter (ideal waveform):</strong> 28.29 dB median PSLR.</li>
+  <li><strong>Conditional 64-tap BLA + MMF (ours):</strong> 30.13 dB median PSLR—<strong>+14.4 dB</strong> over matched filtering, and just <strong>0.27 dB</strong> short of the 30.40 dB oracle ceiling (a receiver literally handed the measured transmitted waveform).</li>
+  <li><strong>Weak-target detection margin:</strong> jumped by <strong>+6.95 dB</strong>, from 14.33 dB to 21.29 dB.</li>
+</ul>
+
+<figure>
+  <img src="eumw-gan-radar/range-profiles-7bw.png" alt="Seven measured range profile plots from 10 MHz to 975 MHz showing Matched Filter, Reciprocal on ideal QAM, Conditional BLA, and Measured-output oracle across targets T1 through T4" loading="lazy">
+  <figcaption>Before and after across every measured bandwidth (10 MHz to 975 MHz): the matched filter sits visibly higher in the sidelobe floor, while conditional BLA tracks the measured-output oracle almost line-for-line.</figcaption>
+</figure>
+
+<p>Just as important as where the method held up is <strong>where it struggled</strong>:</p>
+
+<ul>
+  <li><strong>Closely spaced weak targets can get squashed too.</strong> Our MMF pushes down energy across the sidelobe lag set <code>S</code>. If a weak target happened to sit directly inside the suppressed region of a strong neighbour, the filter would happily flatten it along with the sidelobes. The competition's four targets sat far enough apart that this did not bite us, but a live radar needs careful guard-band or iterative cancellation logic.</li>
+  <li><strong>Bandwidth still rules resolution.</strong> At 10 MHz and 25 MHz, the range bins are wide enough that T1 and T2 shoulder into one another regardless of how good your PA model is. Signal processing cannot invent bandwidth you did not transmit.</li>
+  <li><strong>Unseen operating states and heavier compression.</strong> A per-condition 64-tap linear BLA hits a ceiling once an amplifier is pushed hard into nonlinear saturation (where the uncorrelated Bussgang term <code>d[n]</code> grows) or jumps to an unseen <code>(B, P)</code> point. That is why we sketched a neural follow-up—a shared feature-extraction backbone feeding state-specific linear output weights that can interpolate across <code>(B, P)</code> space or adapt via fast least-squares.</li>
+</ul>
+
+<p><strong>Who owned what:</strong> Dimuthu Lesthuruge anchored our RF amplifier physics, behavioral modeling foundations, and the neural extension architecture. Aprotim Paul led the constrained mismatched filter formulation, ISAC evaluation, and co-presented in London. I audited the measured HDF5 datasets across operating conditions (uncovering the low-compression/linear-dominance surprise), built and benchmarked the 64-tap conditional BLA receiver evaluation across the 133 held-out conditions, designed our visual diagrams and talk narrative, and co-presented the final in London.</p>
+
+<h2 id="london-chaos">ExCeL London, losing gracefully, and an eye-opening week in RF</h2>
+
+<p>Coming straight out of Oulu—where rush hour means waiting forty seconds at a crosswalk—London immediately hits you like an overloaded mixer throwing intermodulation spurs everywhere. Everything is loud, slightly chaotic, and moving at twice the clock rate. Yet somewhere around day three of riding the Elizabeth line and the DLR out to Custom House, walking past the glass canyons of Canary Wharf toward ExCeL London, the chaos quietly normalized. You stop fighting the crowd, tap your card on autopilot, and start debugging slides on the train like you live there.</p>
+
+<p>Inside ExCeL, though, nothing felt ordinary. Walking the EuMW exhibition floor as a first-year master's radio engineering student is genuinely humbling. In university lectures, an RF chain is neat little blocks drawn on a whiteboard. At EuMW, those blocks are sitting on tables as gleaming vector network analyzers, waveguide benches, mmWave probes, and custom GaN hardware—staffed by engineers who spent twenty years solving the exact corner cases you only met in a footnote last Tuesday. You realize very quickly how vast the field is, and how much of it happens far away from neat MATLAB assumptions.</p>
+
+<p>Friday morning came, Aprotim and I walked up to the EuRAD session, opened with Oulu's Air Guitar World Championships, got an actual laugh on the *"hard to predistort an HDF5 file"* line, and walked the judges through our 0.27 dB gap to the oracle. When the results were announced, <strong>BTU Cottbus-Senftenberg</strong> (Jonathan Okocha, Yuyao Jiang, Prabhav Manchanda, Prof. Matthias Rudolph, and Prof. Markus Gardill) took first place with <em>RAGE-AF: Reference-Anchored Gated Equalization for PA-Distorted OFDM Radar</em>.</p>
+
+<p>Honestly? Fair play to them. Their solution leaned directly into comprehensive data analysis and an application-driven, real-time receiver design, and seeing how another strong team framed the exact same measurement files was worth the flight on its own. Reaching an international final and losing to a stronger engineering story does something winning a classroom competition never does: it calibrates your bar against the real world.</p>
+
+<h2 id="bletchley">A quiet postscript at Bletchley Park</h2>
+
+<p>Once the slides were closed and the conference badges came off, I took a train out of London to visit <strong>Bletchley Park</strong> (and the National Museum of Computing next door). After a week inside a cavernous modern exhibition hall humming with 6G demos and gigahertz hardware, walking into quiet wartime huts felt like stepping onto a completely different planet.</p>
+
+<p>And yet it didn't feel unrelated at all. Standing in front of the history of wartime radio interception, mechanical cryptanalysis, and early electronic computing, it struck me how little the core craft has changed in eighty years. Different hardware, different frequencies, vastly faster silicon—but at the bottom of it all, you are still staring at messy, imperfect waves captured out of the air, refusing to trust your first assumption, and figuring out how to coax a faint, invisible truth out of the noise.</p>
+
+<p>We didn't bring a trophy back to Oulu. We brought back something much more useful: proof that we could hold our own on an international microwave engineering stage, a healthy distrust of unexamined datasets, and a much clearer picture of the radio engineers we want to become.</p>
